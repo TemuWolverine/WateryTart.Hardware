@@ -1,0 +1,257 @@
+#CONFIG START
+substitutions:
+  pin_i2c_sca: GPIO25
+  pin_i2c_scl: GPIO26
+  pin_player_next: GPIO16
+  pin_player_previous: ""
+  pin_play_pause: GPIO17
+  pin_track_next: GPIO5
+  pin_track_previous: GPIO18
+  pin_vol_up: ""
+  pin_vol_down: ""
+  pin_vol_mute: ""
+  
+esphome:
+  name: esphome-web-ee8248
+  friendly_name: BebopFlunkyTartRemote
+  min_version: 2025.11.0
+  name_add_mac_suffix: false
+
+esp32:
+  variant: esp32
+  framework:
+    type: esp-idf
+
+logger:
+api:
+ota:
+- platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+i2c:
+  sda: ${pin_i2c_sca}
+  scl: ${pin_i2c_scl}
+  scan: false
+
+globals:
+  - id: current_index
+    type: int
+    initial_value: '0'
+
+  - id: target_entity_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: current_entity_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+# Font definitions
+font:
+  - file: 
+      type: gfonts
+      family: Roboto Mono
+      weight: 400
+    id: basicfont
+    size: 12
+
+  - file: 
+      type: gfonts
+      family: Roboto Mono
+      weight: 400
+    id: basicfont_10
+    size: 10
+
+  - file: 'gfonts://Material+Symbols+Outlined'
+    id: icon_font
+    size: 14
+    glyphs: [
+      "\U0000e034", # Pause
+      "\U0000e037"  # Play
+    ]
+
+display:
+  - platform: ssd1306_i2c
+    model: "SH1106 128x64"
+    rotation: 180
+    address: 0x3C
+    contrast: 70%
+    id: oled_display
+
+    lambda: |-
+      std::string input = id(ma_queue_sensor).state;
+      if (input == "none" || input.length() == 0) {
+        it.printf(0, 0, id(basicfont), "No players found");
+        return;
+      }
+
+      // Split into player entries
+      std::vector<std::string> entries;
+      size_t prev = 0, pos = 0;
+      while ((pos = input.find("|||", prev)) != std::string::npos) {
+        entries.push_back(input.substr(prev, pos - prev));
+        prev = pos + 3;
+      }
+      entries.push_back(input.substr(prev));
+      int idx = id(current_index);
+      if (idx < 0) idx = 0;
+      if (idx >= entries.size()) idx = 0;
+      std::string entry = entries[idx];
+      std::vector<std::string> attrs;
+      prev = 0;
+      while ((pos = entry.find("::", prev)) != std::string::npos) {
+        attrs.push_back(entry.substr(prev, pos - prev));
+        prev = pos + 2;
+      }
+      attrs.push_back(entry.substr(prev));
+
+      std::string entity_id    = (attrs.size() > 0) ? attrs[0] : "";
+      std::string media_title  = (attrs.size() > 1) ? attrs[1] : "";
+      std::string media_artist = (attrs.size() > 2) ? attrs[2] : "";
+      std::string source       = (attrs.size() > 3) ? attrs[3] : "";
+      std::string player_name  = (attrs.size() > 4) ? attrs[4] : "";
+      std::string player_state = (attrs.size() > 5) ? attrs[5] : "";
+      std::string repeat       = (attrs.size() > 6) ? attrs[6] : "";
+
+      // Play/pause icon logic
+      const char* play_icon = "\U0000e037";
+      const char* pause_icon = "\U0000e034";
+      const char* media_icon = (player_state == "playing") ? pause_icon : play_icon;
+      it.printf(112, 0, id(icon_font), "%s", media_icon);
+
+      // Draw title at left, no scrolling
+      it.printf(0, 0, id(basicfont), "%s", media_title.c_str());
+
+      // artist
+      it.printf(0, 18, id(basicfont), "%s", (attrs.size() > 2) ? media_artist.c_str() : "");
+
+      // player
+      it.printf(0, 44, id(basicfont_10), "%s", (attrs.size() > 4) ? player_name.c_str() : "");
+
+text_sensor:
+  - platform: homeassistant
+    id: ma_queue_sensor
+    entity_id: sensor.all_music_players
+    attribute: players
+    on_value:
+      then:
+        - lambda: |-
+            std::string input = id(ma_queue_sensor).state;
+            if (input == "none" || input.length() == 0) {
+              id(current_entity_id) = "";
+              id(current_index) = 0;
+              return;
+            }
+            if (id(current_entity_id).empty() || id(current_entity_id) == "none") {
+              std::vector<std::string> entries;
+              size_t prev = 0, pos = 0;
+              while ((pos = input.find("|||", prev)) != std::string::npos) {
+                entries.push_back(input.substr(prev, pos - prev));
+                prev = pos + 3;
+              }
+              entries.push_back(input.substr(prev));
+              if (entries.size() > 0) {
+                std::string entry = entries[0];
+                std::vector<std::string> attrs;
+                prev = 0;
+                while ((pos = entry.find("::", prev)) != std::string::npos) {
+                  attrs.push_back(entry.substr(prev, pos - prev));
+                  prev = pos + 2;
+                }
+                attrs.push_back(entry.substr(prev));
+                id(current_entity_id) = (attrs.size() > 0) ? attrs[0] : "";
+                id(current_index) = 0;
+              } else {
+                id(current_entity_id) = "";
+                id(current_index) = 0;
+              }
+            }
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: ${pin_play_pause}
+      mode:
+        input: true
+        pullup: true
+
+    name: "PlayPause Button"
+    id: play_pause_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.media_play_pause
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    pin:
+      number: ${pin_track_next}
+      mode:
+        input: true
+        pullup: true
+
+    name: "NextTrack Button"
+    id: nexttrack_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.media_next_track
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    pin:
+      number: ${pin_track_previous}
+      mode:
+        input: true
+        pullup: true
+
+    name: "PreviousTrack Button"
+    id: previoustrack_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.media_previous_track
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    id: next_button
+    pin:
+      number: ${pin_player_next}
+      mode:
+        input: true
+        pullup: true
+    on_press:
+      then:
+        - lambda: |-
+            std::string input = id(ma_queue_sensor).state;
+            if (input == "none" || input.length() == 0) return;
+            std::vector<std::string> entries;
+            size_t prev = 0, pos = 0;
+            while ((pos = input.find("|||", prev)) != std::string::npos) {
+              entries.push_back(input.substr(prev, pos - prev));
+              prev = pos + 3;
+            }
+            entries.push_back(input.substr(prev));
+            int idx = id(current_index) + 1;
+            if (idx < 0) idx = 0;
+            if (idx >= entries.size()) idx = 0;
+            id(current_index) = idx;
+
+            // Parse selected entry
+            std::string entry = entries[idx];
+            std::vector<std::string> attrs;
+            prev = 0;
+            while ((pos = entry.find("::", prev)) != std::string::npos) {
+              attrs.push_back(entry.substr(prev, pos - prev));
+              prev = pos + 2;
+            }
+            attrs.push_back(entry.substr(prev));
+            std::string entity_id = (attrs.size() > 0) ? attrs[0] : "";
+            id(current_entity_id) = entity_id;

@@ -1,0 +1,26 @@
+# configuration.yaml
+
+template:
+  - sensor:
+      - name: "All Music Players"
+        unique_id: all_music_players
+        state: "ok"
+        attributes:
+          players: >
+            {% set ns = namespace(result=[]) %}
+            {% for mp in states.media_player | rejectattr('state', 'equalto', 'unavailable') %}
+              {% set src = state_attr(mp.entity_id, 'source') %}
+              {% if src == 'Music Assistant Queue' %}
+                {% set data = [
+                  mp.entity_id,
+                  mp.attributes.get('media_title', ''),
+                  mp.attributes.get('media_artist', ''),
+                  mp.attributes.get('source', ''),
+                  mp.name,
+                  mp.state,
+                  mp.attributes.get('repeat', '')
+                ] %}
+                {% set ns.result = ns.result + [data | join('::')] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.result | join('|||') if ns.result else 'none' }}
