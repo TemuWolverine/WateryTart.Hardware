@@ -7,7 +7,7 @@ Includes
 * build guide, 
 * software options.
 
-## [WateryTart.Remote](WateryTart.Remote)
+## [WateryTart.Remote](WateryTart.Remote) (work in progress)
 ESP32/ESPHome based remote control to handle a household of Music Assistant devices. 
 
 Includes
@@ -16,5 +16,4 @@ Includes
 * Gerber files for order custom PCB
 * Fusion360 model
 
-## WateryTart.Streamer
-TBD
+## WateryTart.Streamer (TBD)
