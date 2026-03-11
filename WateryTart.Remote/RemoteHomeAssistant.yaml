@@ -11,6 +11,8 @@ template:
             {% for mp in states.media_player | rejectattr('state', 'equalto', 'unavailable') %}
               {% set src = state_attr(mp.entity_id, 'source') %}
               {% if src == 'Music Assistant Queue' %}
+                {% set pic = state_attr(mp.entity_id, 'entity_picture') | default('') %}
+                {% set pic = pic | regex_replace('size=\\d+', 'size=128') %}
                 {% set data = [
                   mp.entity_id,
                   mp.attributes.get('media_title', ''),
@@ -18,7 +20,10 @@ template:
                   mp.attributes.get('source', ''),
                   mp.name,
                   mp.state,
-                  mp.attributes.get('repeat', '')
+                  mp.attributes.get('repeat', ''),
+                  mp.attributes.get('media_duration', 0) | string,
+                  mp.attributes.get('media_position', 0) | string,
+                  pic
                 ] %}
                 {% set ns.result = ns.result + [data | join('::')] %}
               {% endif %}

@@ -1,19 +1,30 @@
 #CONFIG START
 substitutions:
+  name: WateryTart.Remote
   pin_i2c_sca: GPIO25
   pin_i2c_scl: GPIO26
-  pin_player_next: GPIO16
-  pin_player_previous: ""
-  pin_play_pause: GPIO17
-  pin_track_next: GPIO5
-  pin_track_previous: GPIO18
-  pin_vol_up: ""
-  pin_vol_down: ""
-  pin_vol_mute: ""
-  
+
+
+  pin_vol_up: GPIO18
+  pin_vol_down: GPIO23
+  pin_vol_mute: GPIO19
+
+  pin_player_next: GPIO34
+  pin_player_previous: GPIO35
+
+  pin_track_next: GPIO33
+  pin_play_pause: GPIO27
+  pin_track_previous: GPIO17
+
+  pin_fav: GPIO14
+  pin_repeat: GPIO21
+  pin_shuffle: GPIO32
+
+ # pin_misc_1: GPIO12
+
 esphome:
   name: esphome-web-ee8248
-  friendly_name: BebopFlunkyTartRemote
+  friendly_name: ${name}
   min_version: 2025.11.0
   name_add_mac_suffix: false
 
@@ -25,7 +36,7 @@ esp32:
 logger:
 api:
 ota:
-- platform: esphome
+  - platform: esphome
 
 wifi:
   ssid: !secret wifi_ssid
@@ -47,6 +58,23 @@ globals:
     initial_value: '""'
 
   - id: current_entity_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: title_scroll_offset
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Counts up from 0, scrolling only starts after a threshold
+  - id: title_scroll_pause_counter
+    type: int
+    restore_value: no
+    initial_value: '0'
+
+  # Track the last title so we can reset scroll when it changes
+  - id: last_title
     type: std::string
     restore_value: no
     initial_value: '""'
@@ -75,6 +103,18 @@ font:
       "\U0000e037"  # Play
     ]
 
+interval:
+  # Runs every 300ms — increments scroll offset after a pause period
+  # pause_counter threshold of 10 = 10 * 300ms = 3 seconds pause before scroll
+  - interval: 300ms
+    then:
+      - lambda: |-
+          const int PAUSE_TICKS = 10; // 10 * 300ms = 3 seconds before scrolling starts
+          id(title_scroll_pause_counter) += 1;
+          if (id(title_scroll_pause_counter) > PAUSE_TICKS) {
+            id(title_scroll_offset) += 1;
+          }
+
 display:
   - platform: ssd1306_i2c
     model: "SH1106 128x64"
@@ -100,7 +140,7 @@ display:
       entries.push_back(input.substr(prev));
       int idx = id(current_index);
       if (idx < 0) idx = 0;
-      if (idx >= entries.size()) idx = 0;
+      if (idx >= (int)entries.size()) idx = 0;
       std::string entry = entries[idx];
       std::vector<std::string> attrs;
       prev = 0;
@@ -118,20 +158,47 @@ display:
       std::string player_state = (attrs.size() > 5) ? attrs[5] : "";
       std::string repeat       = (attrs.size() > 6) ? attrs[6] : "";
 
-      // Play/pause icon logic
-      const char* play_icon = "\U0000e037";
+      // -- Reset scroll if title has changed --
+      if (media_title != id(last_title)) {
+        id(last_title) = media_title;
+        id(title_scroll_offset) = 0;
+        id(title_scroll_pause_counter) = 0;
+      }
+
+      // -- Display constants --
+      // Icon occupies x=112 to x=126 (14px wide)
+      // Usable title area = 112px wide, ~16 chars at 7px/char
+      const int max_title_chars = 16;
+      const int icon_x = 112;
+
+      // -- Play/pause icon --
+      const char* play_icon  = "\U0000e037";
       const char* pause_icon = "\U0000e034";
       const char* media_icon = (player_state == "playing") ? pause_icon : play_icon;
-      it.printf(112, 0, id(icon_font), "%s", media_icon);
+      it.printf(icon_x, 0, id(icon_font), "%s", media_icon);
 
-      // Draw title at left, no scrolling
-      it.printf(0, 0, id(basicfont), "%s", media_title.c_str());
+      // -- Scrolling title --
+      if ((int)media_title.length() <= max_title_chars) {
+        // Short enough — static display, no scroll needed
+        id(title_scroll_offset) = 0;
+        id(title_scroll_pause_counter) = 0;
+        it.printf(0, 0, id(basicfont), "%s", media_title.c_str());
+      } else {
+        // Add a gap so the title has a clear restart point
+        std::string padded = media_title + "   ";
+        int total_len = (int)padded.length();
+        int offset = id(title_scroll_offset) % total_len;
+        // Build visible string by wrapping around the padded title
+        std::string doubled = padded + padded;
+        std::string visible = doubled.substr(offset, max_title_chars);
+        it.printf(0, 0, id(basicfont), "%s", visible.c_str());
+      }
 
-      // artist
-      it.printf(0, 18, id(basicfont), "%s", (attrs.size() > 2) ? media_artist.c_str() : "");
+      // -- Artist --
+      it.printf(0, 18, id(basicfont), "%s", media_artist.c_str());
 
-      // player
-      it.printf(0, 44, id(basicfont_10), "%s", (attrs.size() > 4) ? player_name.c_str() : "");
+      // -- Player name --
+      it.printf(0, 44, id(basicfont_10), "%s", player_name.c_str());
 
 text_sensor:
   - platform: homeassistant
@@ -171,39 +238,10 @@ text_sensor:
                 id(current_index) = 0;
               }
             }
+
 binary_sensor:
-  - platform: gpio
-    pin:
-      number: ${pin_play_pause}
-      mode:
-        input: true
-        pullup: true
 
-    name: "PlayPause Button"
-    id: play_pause_button
-    on_press:
-      then:
-        - homeassistant.service:
-            service: media_player.media_play_pause
-            data:
-              entity_id: !lambda 'return id(current_entity_id);'
-
-  - platform: gpio
-    pin:
-      number: ${pin_track_next}
-      mode:
-        input: true
-        pullup: true
-
-    name: "NextTrack Button"
-    id: nexttrack_button
-    on_press:
-      then:
-        - homeassistant.service:
-            service: media_player.media_next_track
-            data:
-              entity_id: !lambda 'return id(current_entity_id);'
-
+# Top row
   - platform: gpio
     pin:
       number: ${pin_track_previous}
@@ -221,12 +259,140 @@ binary_sensor:
               entity_id: !lambda 'return id(current_entity_id);'
 
   - platform: gpio
+    pin:
+      number: ${pin_play_pause}
+      mode:
+        input: true
+        pullup: true
+    name: "PlayPause Button"
+    id: play_pause_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.media_play_pause
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    pin:
+      number: ${pin_track_next}
+      mode:
+        input: true
+        pullup: true
+    name: "NextTrack Button"
+    id: nexttrack_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.media_next_track
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+# Middle Row
+  - platform: gpio
+    pin:
+        number: ${pin_repeat}
+        mode:
+          input: true
+          pullup: true
+    name: "Repeat Button"
+    id: repeat_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.repeat_set
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+              repeat: all #off/all/one
+
+# - platform: gpio
+#     pin:
+#       number: ${pin_fav}
+#       mode:
+#         input: true
+#         pullup: true
+
+  - platform: gpio
+    pin:
+        number: ${pin_shuffle}
+        mode:
+          input: true
+          pullup: true
+
+    name: "Shuffle Button"
+    id: shuffle_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.shuffle_set
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+              shuffle: 'true' #true/false
+
+
+  #pin_fav: GPIO14 ##No such HA command
+  #pin_repeat: GPIO21 #media_player.repeat_set off/all/one
+  #pin_shuffle: GPIO32 #media_player.shuffle_set true/false
+
+#Volume Rocker
+  - platform: gpio
+    pin:
+        number: ${pin_vol_up}
+        mode:
+          input: true
+          pullup: true
+
+    name: "VolUp Button"
+    id: volup_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.volume_up
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    pin:
+        number: ${pin_vol_down}
+        mode:
+          input: true
+          pullup: true
+
+    name: "VolDown Button"
+    id: voldown_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.volume_down
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+
+  - platform: gpio
+    pin:
+        number: ${pin_vol_mute}
+        mode:
+          input: true
+          pullup: true
+
+    name: "Mute Button"
+    id: mute_button
+    on_press:
+      then:
+        - homeassistant.service:
+            service: media_player.is_volume_muted
+            data:
+              entity_id: !lambda 'return id(current_entity_id);'
+              shuffle: 'true' #true/false
+
+#Player Rocker
+  - platform: gpio
     id: next_button
     pin:
       number: ${pin_player_next}
       mode:
         input: true
-        pullup: true
+        #pullup: true
+
     on_press:
       then:
         - lambda: |-
@@ -241,9 +407,52 @@ binary_sensor:
             entries.push_back(input.substr(prev));
             int idx = id(current_index) + 1;
             if (idx < 0) idx = 0;
-            if (idx >= entries.size()) idx = 0;
+            if (idx >= (int)entries.size()) idx = 0;
             id(current_index) = idx;
+            // Also reset scroll on player change
+            id(title_scroll_offset) = 0;
+            id(title_scroll_pause_counter) = 0;
+            // Parse selected entry
+            std::string entry = entries[idx];
+            std::vector<std::string> attrs;
+            prev = 0;
+            while ((pos = entry.find("::", prev)) != std::string::npos) {
+              attrs.push_back(entry.substr(prev, pos - prev));
+              prev = pos + 2;
+            }
+            attrs.push_back(entry.substr(prev));
+            std::string entity_id = (attrs.size() > 0) ? attrs[0] : "";
+            id(current_entity_id) = entity_id;
 
+
+  - platform: gpio
+    id: previous_button
+    pin:
+      number: ${pin_player_previous}
+      mode:
+        input: true
+        #pullup: true
+
+    on_press:
+      then:
+        - lambda: |-
+            std::string input = id(ma_queue_sensor).state;
+            if (input == "none" || input.length() == 0) return;
+            std::vector<std::string> entries;
+            size_t prev = 0, pos = 0;
+
+            while ((pos = input.find("|||", prev)) != std::string::npos) {
+              entries.push_back(input.substr(prev, pos - prev));
+              prev = pos + 3;
+            }
+            entries.push_back(input.substr(prev));
+            int idx = id(current_index) - 1;
+            if (idx < 0) idx = (int)entries.size() - 1;
+            if (idx >= (int)entries.size()) idx = 0;
+            id(current_index) = idx;
+            // Also reset scroll on player change
+            id(title_scroll_offset) = 0;
+            id(title_scroll_pause_counter) = 0;
             // Parse selected entry
             std::string entry = entries[idx];
             std::vector<std::string> attrs;
