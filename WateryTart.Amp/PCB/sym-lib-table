@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "TAS")(type "Legacy")(uri "C:/Users/jesse/OneDrive/Documenten/PCB/Production PCB/TAS.lib")(options "")(descr ""))
+  (lib (name "TAS5825M-rescue")(type "KiCad")(uri "${KIPRJMOD}/TAS5825M-rescue.kicad_sym")(options "")(descr ""))
+)
