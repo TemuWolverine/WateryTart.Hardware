@@ -1,0 +1,26 @@
+substitutions:
+  friendly_name: WateryTartP4
+  name: waterytartp4player
+
+  # JC4880P433 I2C pins
+  i2c_sda: "7"
+  i2c_scl: "8"
+
+  # display & touch pins
+  reset_pin: GPIO54
+  cmd_pin: GPIO19
+  clk_pin: GPIO18
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+
+# ===== Packages =====
+packages:
+  waterytart_remote:
+    url: https://github.com/TemuWolverine/WateryTart.Hardware
+    ref: main
+    files:
+      - WateryTart.Guition4-3inch/hardware-setup.yaml
+      - WateryTart.Guition4-3inch/esphome-boilerplate.yaml
+      - WateryTart.Guition4-3inch/app.yaml
