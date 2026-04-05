@@ -1,46 +1,50 @@
 #CONFIG START
 substitutions:
-  name: WateryTart.Remote
-  pin_i2c_sca: GPIO25
-  pin_i2c_scl: GPIO26
+  device_name: esphome-web-ee8248
+  friendly_name: WateryTart.Remote
 
+  #Display
+  pin_i2c_sca: GPIO14
+  pin_i2c_scl: GPIO27
 
-  pin_vol_up: GPIO18
-  pin_vol_down: GPIO23
-  pin_vol_mute: GPIO19
+  #Wakup switch
+  pin_wakeup: GPIO0
 
-  pin_player_next: GPIO34
-  pin_player_previous: GPIO35
-
-  pin_track_next: GPIO33
-  pin_play_pause: GPIO27
+  #Row 1
   pin_track_previous: GPIO17
+  pin_play_pause: GPIO2
+  pin_track_next: GPIO26
 
-  pin_fav: GPIO14
-  pin_repeat: GPIO21
-  pin_shuffle: GPIO32
+  #Row 2
+  pin_repeat: GPIO5
+  pin_fav: GPIO4
+  pin_shuffle: GPIO25
 
- # pin_misc_1: GPIO12
+  #Row 3
+  pin_vol_up: GPIO18
+  #blank
+  pin_player_next: GPIO33
 
-esphome:
-  name: esphome-web-ee8248
-  friendly_name: ${name}
-  min_version: 2025.11.0
-  name_add_mac_suffix: false
 
-esp32:
-  variant: esp32
-  framework:
-    type: esp-idf
+  #Row 4
+  pin_vol_down: GPIO23
+  #blank
+  pin_player_previous: GPIO32
+  
+  #Row5
+  pin_vol_mute: GPIO19
+  pin_misc: GPIO16
 
-logger:
-api:
-ota:
-  - platform: esphome
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+packages:
+  esphome_templates:
+    url: https://github.com/TemuWolverine/esphome_templates
+    ref: main
+    refresh: 1d
+    files:
+      - esphome_boilerplate.yaml
+      - boards/wemos_lolin_d32.yaml
+      - devices/display/ssd1306_i2c.yaml
 
 i2c:
   sda: ${pin_i2c_sca}
@@ -116,13 +120,7 @@ interval:
           }
 
 display:
-  - platform: ssd1306_i2c
-    model: "SH1106 128x64"
-    rotation: 180
-    address: 0x3C
-    contrast: 70%
-    id: oled_display
-
+  - id: !extend oled_display
     lambda: |-
       std::string input = id(ma_queue_sensor).state;
       if (input == "none" || input.length() == 0) {
@@ -165,30 +163,24 @@ display:
         id(title_scroll_pause_counter) = 0;
       }
 
-      // -- Display constants --
-      // Icon occupies x=112 to x=126 (14px wide)
-      // Usable title area = 112px wide, ~16 chars at 7px/char
+      // -- Layout (128x128) --
+      // y=0   : Scrolling media title  (top)
+      // y=18  : Artist
+      // y=100 : Play/Pause icon + state label
+      // y=114 : Player name            (bottom)
+
       const int max_title_chars = 16;
       const int icon_x = 112;
 
-      // -- Play/pause icon --
-      const char* play_icon  = "\U0000e037";
-      const char* pause_icon = "\U0000e034";
-      const char* media_icon = (player_state == "playing") ? pause_icon : play_icon;
-      it.printf(icon_x, 0, id(icon_font), "%s", media_icon);
-
-      // -- Scrolling title --
+      // -- Scrolling title (top) --
       if ((int)media_title.length() <= max_title_chars) {
-        // Short enough — static display, no scroll needed
         id(title_scroll_offset) = 0;
         id(title_scroll_pause_counter) = 0;
         it.printf(0, 0, id(basicfont), "%s", media_title.c_str());
       } else {
-        // Add a gap so the title has a clear restart point
         std::string padded = media_title + "   ";
         int total_len = (int)padded.length();
         int offset = id(title_scroll_offset) % total_len;
-        // Build visible string by wrapping around the padded title
         std::string doubled = padded + padded;
         std::string visible = doubled.substr(offset, max_title_chars);
         it.printf(0, 0, id(basicfont), "%s", visible.c_str());
@@ -197,8 +189,15 @@ display:
       // -- Artist --
       it.printf(0, 18, id(basicfont), "%s", media_artist.c_str());
 
-      // -- Player name --
-      it.printf(0, 44, id(basicfont_10), "%s", player_name.c_str());
+      // -- Play/Pause icon + state label (second from bottom) --
+      const char* play_icon  = "\U0000e037";
+      const char* pause_icon = "\U0000e034";
+      const char* media_icon = (player_state == "playing") ? pause_icon : play_icon;
+      it.printf(0, 100, id(icon_font), "%s", media_icon);
+      it.printf(18, 102, id(basicfont), "%s", player_state.c_str());
+
+      // -- Player name (bottom) --
+      it.printf(0, 114, id(basicfont_10), "%s", player_name.c_str());
 
 text_sensor:
   - platform: homeassistant
@@ -240,6 +239,15 @@ text_sensor:
             }
 
 binary_sensor:
+  - platform: gpio
+    pin:
+      number: ${pin_wakeup}
+      inverted: True
+      mode:
+        input: true
+
+    name: "Wakeup Button"
+    id: wakeup_button
 
 # Top row
   - platform: gpio
@@ -391,7 +399,7 @@ binary_sensor:
       number: ${pin_player_next}
       mode:
         input: true
-        #pullup: true
+        pullup: true
 
     on_press:
       then:
@@ -429,9 +437,10 @@ binary_sensor:
     id: previous_button
     pin:
       number: ${pin_player_previous}
+      inverted: true
       mode:
         input: true
-        #pullup: true
+        pullup: true
 
     on_press:
       then:
