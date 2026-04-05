@@ -36,6 +36,63 @@ substitutions:
   pin_misc: GPIO16
 
 
+  time_before_sleep: 60 #in seconds
+
+
+esphome:
+    on_boot:
+    - priority: 250
+      then:
+        - lambda: |-
+            auto cause = esp_sleep_get_wakeup_cause();
+            if (cause == ESP_SLEEP_WAKEUP_EXT0) {
+              id(oled_display).turn_on();
+              ESP_LOGI("main", "Device woke up by EXT0");
+            } else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+              ESP_LOGD("main", "Device woke up by timer.");
+            } else {
+              ESP_LOGD("main", "Device woke up by other cause: %d", cause);
+            }
+
+#Deep Sleep
+script:
+  - id: reset_idle_timer
+    then:
+      - lambda: |-
+          id(last_active) = millis() / 1000;
+
+deep_sleep:
+  id: deep_sleep_ctrl
+  sleep_duration: 2800 min
+  wakeup_pin:
+    - pin:
+        number: ${pin_wakeup}
+        inverted: True  # will wake up when P8 is low
+      wakeup_pin_mode: KEEP_AWAKE # will prevent sleep as long as P8 is low
+
+
+interval:
+  - interval: 60s
+    then:
+      - if:
+          condition:
+            lambda: return (millis() / 1000) - id(last_active) >= ${time_before_sleep};
+          then:
+            - lambda: |-
+                id(oled_display).turn_off();
+            - deep_sleep.enter: deep_sleep_ctrl
+
+  # Runs every 300ms — increments scroll offset after a pause period
+  # pause_counter threshold of 10 = 10 * 300ms = 3 seconds pause before scroll
+  - interval: 300ms
+    then:
+      - lambda: |-
+          const int PAUSE_TICKS = 10; // 10 * 300ms = 3 seconds before scrolling starts
+          id(title_scroll_pause_counter) += 1;
+          if (id(title_scroll_pause_counter) > PAUSE_TICKS) {
+            id(title_scroll_offset) += 1;
+          }
+
 packages:
   esphome_templates:
     url: https://github.com/TemuWolverine/esphome_templates
@@ -52,6 +109,11 @@ i2c:
   scan: false
 
 globals:
+  - id: last_active
+    type: int
+    restore_value: no
+    initial_value: '0'
+
   - id: current_index
     type: int
     initial_value: '0'
@@ -107,17 +169,7 @@ font:
       "\U0000e037"  # Play
     ]
 
-interval:
-  # Runs every 300ms — increments scroll offset after a pause period
-  # pause_counter threshold of 10 = 10 * 300ms = 3 seconds pause before scroll
-  - interval: 300ms
-    then:
-      - lambda: |-
-          const int PAUSE_TICKS = 10; // 10 * 300ms = 3 seconds before scrolling starts
-          id(title_scroll_pause_counter) += 1;
-          if (id(title_scroll_pause_counter) > PAUSE_TICKS) {
-            id(title_scroll_offset) += 1;
-          }
+
 
 display:
   - id: !extend oled_display
@@ -239,16 +291,16 @@ text_sensor:
             }
 
 binary_sensor:
-  - platform: gpio
-    pin:
-      number: ${pin_wakeup}
-      inverted: True
-      mode:
-        input: true
-
-    name: "Wakeup Button"
-    id: wakeup_button
-
+#  - platform: gpio
+#    pin:
+#      number: ${pin_wakeup}
+#      inverted: True
+#      mode:
+#        input: true
+#
+#    name: "Wakeup Button"
+#    id: wakeup_button
+#
 # Top row
   - platform: gpio
     pin:
@@ -261,6 +313,7 @@ binary_sensor:
     id: previoustrack_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.media_previous_track
             data:
@@ -276,6 +329,7 @@ binary_sensor:
     id: play_pause_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.media_play_pause
             data:
@@ -291,6 +345,7 @@ binary_sensor:
     id: nexttrack_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.media_next_track
             data:
@@ -307,6 +362,7 @@ binary_sensor:
     id: repeat_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.repeat_set
             data:
@@ -331,6 +387,7 @@ binary_sensor:
     id: shuffle_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.shuffle_set
             data:
@@ -354,6 +411,7 @@ binary_sensor:
     id: volup_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.volume_up
             data:
@@ -370,6 +428,7 @@ binary_sensor:
     id: voldown_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.volume_down
             data:
@@ -386,6 +445,7 @@ binary_sensor:
     id: mute_button
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - homeassistant.service:
             service: media_player.is_volume_muted
             data:
@@ -403,6 +463,7 @@ binary_sensor:
 
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - lambda: |-
             std::string input = id(ma_queue_sensor).state;
             if (input == "none" || input.length() == 0) return;
@@ -444,6 +505,7 @@ binary_sensor:
 
     on_press:
       then:
+        - script.execute: reset_idle_timer
         - lambda: |-
             std::string input = id(ma_queue_sensor).state;
             if (input == "none" || input.length() == 0) return;
